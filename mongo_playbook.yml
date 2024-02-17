@@ -1,0 +1,54 @@
+---
+- name: Provision MongoDB Replica Set
+  hosts: mongo_servers
+  become: yes
+  vars:
+    mongo_replica_set_name: "myReplicaSet"
+    mongo_bind_ip: "0.0.0.0" # Adjust for security as needed
+    mongo_port: 27017
+    replica_set_members:
+      - host_name: mongo1
+        ip: 192.168.1.1
+      - host_name: mongo2
+        ip: 192.168.1.2
+      - host_name: mongo3
+        ip: 192.168.1.3
+
+  tasks:
+    - name: Install MongoDB
+      apt:
+        name: mongodb
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Configure MongoDB to listen on all interfaces (modify mongodb.conf)
+      lineinfile:
+        path: /etc/mongodb.conf
+        regexp: '^bind_ip ='
+        line: "bind_ip = {{ mongo_bind_ip }}"
+      notify: restart mongodb
+
+    - name: Set MongoDB port (modify mongodb.conf)
+      lineinfile:
+        path: /etc/mongodb.conf
+        regexp: '^port ='
+        line: "port = {{ mongo_port }}"
+      notify: restart mongodb
+
+    - name: Enable replica set configuration
+      lineinfile:
+        path: /etc/mongodb.conf
+        regexp: '^#replication:'
+        line: "replication:\n  replSetName: \"{{ mongo_replica_set_name }}\""
+      notify: restart mongodb
+
+    - name: Initialize the MongoDB replica set
+      command: mongo --eval 'rs.initiate({_id: "{{ mongo_replica_set_name }}", members: [{{ replica_set_members | map(attribute='ip') | map('regex_replace', '^', '{_id: 0, host: "') | map('regex_replace', '$', '"}') | join('}, {') }}]})'
+      when: inventory_hostname == replica_set_members[0].host_name
+      ignore_errors: yes
+
+  handlers:
+    - name: restart mongodb
+      service:
+        name: mongodb
+        state: restarted
